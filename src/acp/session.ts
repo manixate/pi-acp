@@ -27,6 +27,7 @@ import {
   isBashTool
 } from './translate/bash.js'
 import { toolResultToText } from './translate/pi-tools.js'
+import { toElicitationRequest, toPiExtensionUiResponse, type PiExtensionUiMethod } from './translate/elicitation.js'
 
 type SessionCreateParams = {
   cwd: string
@@ -34,6 +35,7 @@ type SessionCreateParams = {
   conn: AgentSideConnection
   fileCommands?: import('./slash-commands.js').FileSlashCommand[]
   piCommand?: string
+  supportsFormElicitation?: boolean
 }
 
 export type StopReason = 'end_turn' | 'cancelled' | 'error'
@@ -220,7 +222,8 @@ export class SessionManager {
       mcpServers: params.mcpServers,
       proc,
       conn: params.conn,
-      fileCommands: params.fileCommands ?? []
+      fileCommands: params.fileCommands ?? [],
+      supportsFormElicitation: params.supportsFormElicitation ?? false
     })
 
     this.sessions.set(sessionId, session)
@@ -247,7 +250,8 @@ export class SessionManager {
       mcpServers: params.mcpServers,
       proc: params.proc,
       conn: params.conn,
-      fileCommands: params.fileCommands ?? []
+      fileCommands: params.fileCommands ?? [],
+      supportsFormElicitation: params.supportsFormElicitation ?? false
     })
 
     this.sessions.set(sessionId, session)
@@ -266,6 +270,7 @@ export class PiAcpSession {
   readonly proc: PiRpcProcess
   private readonly conn: AgentSideConnection
   private readonly fileCommands: FileSlashCommand[]
+  private readonly supportsFormElicitation: boolean
 
   // Used to map abort semantics to ACP stopReason.
   // Applies to the currently running turn.
@@ -303,6 +308,7 @@ export class PiAcpSession {
     proc: PiRpcProcess
     conn: AgentSideConnection
     fileCommands?: FileSlashCommand[]
+    supportsFormElicitation?: boolean
   }) {
     this.sessionId = opts.sessionId
     this.cwd = opts.cwd
@@ -310,6 +316,7 @@ export class PiAcpSession {
     this.proc = opts.proc
     this.conn = opts.conn
     this.fileCommands = opts.fileCommands ?? []
+    this.supportsFormElicitation = opts.supportsFormElicitation ?? false
 
     this.proc.onEvent(ev => this.handlePiEvent(ev))
   }
@@ -875,6 +882,11 @@ export class PiAcpSession {
       return
     }
 
+    if (this.supportsFormElicitation && isInteractiveUiMethod(method)) {
+      const handled = await this.handleExtensionElicitation(ev, id, method)
+      if (handled) return
+    }
+
     if (method === 'select') {
       await this.handleExtensionSelect(ev, id)
       return
@@ -908,6 +920,19 @@ export class PiAcpSession {
     }
 
     await this.proc.sendExtensionUiResponse({ id, cancelled: true })
+  }
+
+  private async handleExtensionElicitation(ev: PiRpcEvent, id: string, method: PiExtensionUiMethod): Promise<boolean> {
+    const request = toElicitationRequest(this.sessionId, method, ev)
+    if (!request) return false
+
+    try {
+      const response = await this.conn.unstable_createElicitation(request)
+      await this.proc.sendExtensionUiResponse(toPiExtensionUiResponse(id, method, response))
+      return true
+    } catch {
+      return false
+    }
   }
 
   private async handleExtensionSelect(ev: PiRpcEvent, id: string): Promise<void> {
@@ -965,6 +990,10 @@ export class PiAcpSession {
       return null
     }
   }
+}
+
+function isInteractiveUiMethod(method: string | null): method is PiExtensionUiMethod {
+  return method === 'select' || method === 'confirm' || method === 'input' || method === 'editor'
 }
 
 function extensionUiToolCall(id: string, ev: PiRpcEvent) {

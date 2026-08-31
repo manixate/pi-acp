@@ -125,6 +125,7 @@ export class PiAcpAgent implements ACPAgent {
   private readonly sessions = new SessionManager()
   private readonly store = new SessionStore()
   private readonly restoringSessions = new Map<string, Promise<PiAcpSession>>()
+  private supportsFormElicitation = false
 
   dispose(): void {
     this.sessions.disposeAll()
@@ -216,7 +217,8 @@ export class PiAcpAgent implements ACPAgent {
         mcpServers: opts?.mcpServers ?? [],
         conn: this.conn,
         proc,
-        fileCommands
+        fileCommands,
+        supportsFormElicitation: this.supportsFormElicitation
       })
 
       this.lastSessionCwd = cwd
@@ -238,6 +240,7 @@ export class PiAcpAgent implements ACPAgent {
     // We currently only support ACP protocol version 1.
     const supportedVersion = 1
     const requested = params.protocolVersion
+    this.supportsFormElicitation = params.clientCapabilities?.elicitation?.form != null
 
     return {
       protocolVersion: requested === supportedVersion ? requested : supportedVersion,
@@ -285,7 +288,8 @@ export class PiAcpAgent implements ACPAgent {
       mcpServers: params.mcpServers,
       conn: this.conn,
       fileCommands,
-      piCommand: process.env.PI_ACP_PI_COMMAND
+      piCommand: process.env.PI_ACP_PI_COMMAND,
+      supportsFormElicitation: this.supportsFormElicitation
     })
 
     // Fetch state + models once (parallel) to reduce startup latency.

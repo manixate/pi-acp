@@ -220,6 +220,102 @@ test('PiAcpSession: handles extension confirm via ACP permission request', async
   assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-2', confirmed: false }])
 })
 
+test('PiAcpSession: handles extension select via ACP elicitation when supported', async () => {
+  const conn = new FakeAgentSideConnection()
+  conn.nextElicitationResponse = { action: 'accept', content: { value: 'Beta' } }
+  const proc = new FakePiRpcProcess()
+
+  new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    fileCommands: [],
+    supportsFormElicitation: true
+  })
+
+  proc.emit({
+    type: 'extension_ui_request',
+    id: 'ui-elicit-select',
+    method: 'select',
+    title: 'Pick one',
+    options: ['Alpha', 'Beta']
+  })
+
+  await new Promise(r => setTimeout(r, 0))
+
+  assert.equal(conn.elicitationRequests.length, 1)
+  assert.deepEqual((conn.elicitationRequests[0] as any).requestedSchema.properties.value.enum, ['Alpha', 'Beta'])
+  assert.equal(conn.permissionRequests.length, 0)
+  assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-elicit-select', value: 'Beta' }])
+})
+
+test('PiAcpSession: handles extension input and editor via ACP elicitation', async () => {
+  const conn = new FakeAgentSideConnection()
+  const proc = new FakePiRpcProcess()
+
+  new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    fileCommands: [],
+    supportsFormElicitation: true
+  })
+
+  conn.nextElicitationResponse = { action: 'accept', content: { value: 'Ada' } }
+  proc.emit({
+    type: 'extension_ui_request',
+    id: 'ui-elicit-input',
+    method: 'input',
+    title: 'Enter name',
+    placeholder: 'Name'
+  })
+  await new Promise(r => setTimeout(r, 0))
+
+  conn.nextElicitationResponse = { action: 'accept', content: { value: 'Edited text' } }
+  proc.emit({
+    type: 'extension_ui_request',
+    id: 'ui-elicit-editor',
+    method: 'editor',
+    title: 'Edit text',
+    prefill: 'Initial text'
+  })
+  await new Promise(r => setTimeout(r, 0))
+
+  assert.equal(conn.elicitationRequests.length, 2)
+  assert.equal((conn.elicitationRequests[0] as any).requestedSchema.properties.value.description, 'Name')
+  assert.equal((conn.elicitationRequests[1] as any).requestedSchema.properties.value.default, 'Initial text')
+  assert.deepEqual(proc.extensionUiResponses, [
+    { id: 'ui-elicit-input', value: 'Ada' },
+    { id: 'ui-elicit-editor', value: 'Edited text' }
+  ])
+})
+
+test('PiAcpSession: maps declined ACP elicitation to a cancelled pi response', async () => {
+  const conn = new FakeAgentSideConnection()
+  conn.nextElicitationResponse = { action: 'decline' }
+  const proc = new FakePiRpcProcess()
+
+  new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    fileCommands: [],
+    supportsFormElicitation: true
+  })
+
+  proc.emit({ type: 'extension_ui_request', id: 'ui-elicit-confirm', method: 'confirm', title: 'Continue?' })
+
+  await new Promise(r => setTimeout(r, 0))
+
+  assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-elicit-confirm', cancelled: true }])
+})
+
 test('PiAcpSession: sends cancelled response when ACP confirm is cancelled', async () => {
   const conn = new FakeAgentSideConnection()
   conn.nextPermissionResponse = { outcome: { outcome: 'cancelled' } }
